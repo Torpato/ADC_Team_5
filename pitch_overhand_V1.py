@@ -9,7 +9,7 @@ import mujoco.viewer
 
 MODEL = "Model/g1_ball.xml"
 
-T_RELEASE = 2.30   # instante da largada (muito sensivel: +-0.03 s muda tudo)
+T_RELEASE = 2.29   # instante da largada (muito sensivel: +-0.03 s muda tudo)
 T_RESET = 5.00     # recomeca o lancamento
 
 m = mujoco.MjModel.from_xml_path(MODEL)
@@ -113,14 +113,16 @@ def reset():
 
 reset()
 released = False
+prev_time = d.time
 
 with mujoco.viewer.launch_passive(m, d) as viewer:
     while viewer.is_running():
         step_start = time.time()
 
-        if d.time >= T_RESET:
+        if d.time >= T_RESET or d.time < prev_time:
             reset()
             released = False
+        prev_time = d.time
 
         ctrl = np.zeros(m.nu)
         for joint, value in pose_at(d.time).items():
