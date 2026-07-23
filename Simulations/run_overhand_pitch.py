@@ -2,26 +2,24 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 import time
 
 import mujoco
 import mujoco.viewer
 
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIRECTORY.parent
+sys.path.insert(0, str(PROJECT_ROOT / "Python"))
+
+from Mapper import get_model_path
 from overhand_pitch_controller import (
     OverhandPitchController,
 )
 
 
-# Find the project root automatically.
-SCRIPT_DIRECTORY = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIRECTORY.parent
-
-DEFAULT_MODEL = (
-    PROJECT_ROOT
-    / "Model"
-    / "g1_ball.xml"
-)
+DEFAULT_MODEL = get_model_path("g1_ball.xml")
 
 
 def parse_arguments() -> argparse.Namespace:
