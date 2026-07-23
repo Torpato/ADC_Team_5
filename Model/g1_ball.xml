@@ -298,6 +298,13 @@
   </asset>
   <worldbody>
     <light pos="1 0 3.5" dir="0 0 -1" directional="true"/>
+    <!-- Camera views (Tab to switch) -->
+    <camera name="demo" pos="2.60 -2.60 1.70" xyaxes="0.721 0.693 0 -0.104 0.109 0.989"/>
+    <camera name="profile" pos="0.60 -3.60 1.35" xyaxes="1 0 0 0 0.069 0.998"/>
+    <camera name="back" pos="-2.50 -1.70 2.00" xyaxes="0.480 -0.877 0 0.309 0.169 0.936"/>
+    <camera name="trajectory" pos="3.50 -7.50 2.60" xyaxes="0.998 0.067 0 -0.015 0.220 0.975"/>
+    <camera name="front" pos="3.20 -0.20 1.60" xyaxes="0.062 0.998 0 -0.124 0.008 0.992"/>
+    <camera name="follow" mode="trackcom" pos="1.50 -3.20 1.40" xyaxes="0.905 0.424 0 -0.048 0.102 0.994"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
   </worldbody>
 
