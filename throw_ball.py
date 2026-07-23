@@ -1,8 +1,3 @@
-"""G1 segura uma bola na mao direita e atira-a.
-
-Correr com:   python3 throw_ball.py
-"""
-
 import time
 import numpy as np
 import mujoco
