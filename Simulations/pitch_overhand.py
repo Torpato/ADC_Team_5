@@ -1,16 +1,5 @@
-"""G1 a fazer um lancamento de baseball por cima do ombro (overhand).
-
-Fases, como num lancador real:
-  1. preparacao   - bracos afastam-se do corpo
-  2. levantamento - o braco sobe pela frente ate ficar vertical
-  3. armar        - cotovelo dobra, a mao (e a bola) ficam atras da cabeca;
-                    o tronco enrola e inclina-se ligeiramente para tras
-  4. chicote      - o tronco desenrola e flete para a frente, o cotovelo
-                    estende, a mao passa por cima do ombro -- a bola sai aqui
-  5. acompanhamento - o braco continua para baixo, cruzando o corpo
-  6. recuperacao  - volta a posicao de pe
-
-Correr com:   python3 pitch_overhand.py
+"""
+Run with:   python3 pitch_overhand.py
 """
 
 import time
@@ -18,12 +7,20 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 
-MODEL = "Model/g1_ball.xml"
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
+
+from Mapper import get_model_path
+
+MODEL_PATH = get_model_path("g1_ball.xml")
 
 T_RELEASE = 2.29   # instante da largada (muito sensivel: +-0.03 s muda tudo)
 T_RESET = 5.00     # recomeca o lancamento
 
-m = mujoco.MjModel.from_xml_path(MODEL)
+m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
 d = mujoco.MjData(m)
 
 names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(m.nu)]

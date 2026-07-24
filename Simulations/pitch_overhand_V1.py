@@ -1,18 +1,26 @@
 """
-Running with:   python3 pitch_overhand_V1.py
+Run with:   python3 pitch_overhand_V1.py
 """
 
+import sys
 import time
+from pathlib import Path
+
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-MODEL = "Model/g1_ball.xml"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
 
-T_RELEASE = 2.30   # instante da largada (muito sensivel: +-0.03 s muda tudo)
+from Mapper import get_model_path
+
+MODEL_PATH = get_model_path("g1_ball.xml")
+
+T_RELEASE = 2.29   # instante da largada (muito sensivel: +-0.03 s muda tudo)
 T_RESET = 5.00     # recomeca o lancamento
 
-m = mujoco.MjModel.from_xml_path(MODEL)
+m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
 d = mujoco.MjData(m)
 
 names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(m.nu)]
@@ -113,14 +121,16 @@ def reset():
 
 reset()
 released = False
+prev_time = d.time
 
 with mujoco.viewer.launch_passive(m, d) as viewer:
     while viewer.is_running():
         step_start = time.time()
 
-        if d.time >= T_RESET:
+        if d.time >= T_RESET or d.time < prev_time:
             reset()
             released = False
+        prev_time = d.time
 
         ctrl = np.zeros(m.nu)
         for joint, value in pose_at(d.time).items():

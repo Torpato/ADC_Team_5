@@ -1,29 +1,32 @@
-"""G1 a fazer um lancamento de baseball, com o corpo todo.
-
-Sequencia: posicao inicial -> enrolar o tronco -> braco armado
--> desenrolar (anca, tronco, ombro, cotovelo) -> largada -> acompanhamento.
-
-Correr com:   python3 pitch_ball.py
+"""
+Run with:   python3 pitch_ball_V1.py
 """
 
 import time
+from pathlib import Path
+
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-MODEL = "Model/g1_ball.xml"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
 
-T_RELEASE = 2.22   # instante da largada
-T_RESET = 7.00     # recomeca o lancamento
+from Mapper import get_model_path
 
-COIL = -0.45       # rotacao do tronco para tras
-UNCOIL = 0.25      # rotacao do tronco para a frente
-WAIST_PITCH = 0.08  # inclinacao do tronco na largada
+MODEL_PATH = get_model_path("g1_ball.xml")
 
-# ganhos do equilibrio
+T_RELEASE = 2.21   
+T_RESET = 5.00   
+
+COIL = -0.45       # Chest back rotation 
+UNCOIL = 0.25      # Chest front rotation
+WAIST_PITCH = 0.08  # Waist pitch in the starting position
+
+# gains for balance
 K_POS, K_VEL = 1.5, 0.3
 
-m = mujoco.MjModel.from_xml_path(MODEL)
+m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
 d = mujoco.MjData(m)
 
 names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(m.nu)]
@@ -33,36 +36,42 @@ BALL = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "ball")
 L_ANKLE = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "left_ankle_roll_link")
 R_ANKLE = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "right_ankle_roll_link")
 
-# --- as poses-chave do lancamento -------------------------------------
+# Key poses for the throwing motion, with timestamps and joint angles.
 WAYPOINTS = [
-    # posicao neutra
+    # Neutral position
     (0.00, dict()),
 
-    # posicao inicial: bracos recolhidos a frente do corpo
-    (0.70, dict(right_shoulder_pitch_joint=0.70, right_elbow_joint=0.90,
-                left_shoulder_pitch_joint=0.70, left_elbow_joint=0.90)),
+    # Initial position: arms folded in front of the body
+    (0.70, dict(right_shoulder_pitch_joint=0.50, right_shoulder_roll_joint=-0.40,
+                right_elbow_joint=0.90,
+                left_shoulder_pitch_joint=0.50, left_shoulder_roll_joint=0.40,
+                left_elbow_joint=0.90)),
 
-    # comeca a enrolar o tronco, braco a subir
+    # Chest starts to coil, arm rising
     (1.30, dict(waist_yaw_joint=COIL * 0.5, waist_pitch_joint=-0.10,
-                right_shoulder_pitch_joint=0.95, right_elbow_joint=1.05,
-                left_shoulder_pitch_joint=0.30, left_elbow_joint=1.30)),
+                right_shoulder_pitch_joint=0.95, right_shoulder_roll_joint=-0.55,
+                right_elbow_joint=1.05,
+                left_shoulder_pitch_joint=0.30, left_shoulder_roll_joint=0.20,
+                left_elbow_joint=1.30)),
 
-    # maximo enrolamento: braco armado atras, luva apontada ao alvo
+    # Maximum coil: arm extended behind, hand pointed at the target
     (1.95, dict(waist_yaw_joint=COIL, waist_pitch_joint=-0.15,
                 right_shoulder_pitch_joint=1.35, right_shoulder_roll_joint=-0.55,
                 right_elbow_joint=1.45,
                 left_shoulder_pitch_joint=-0.85, left_elbow_joint=0.60)),
 
-    # desenrola tudo de uma vez -- e aqui que a bola sai
+    # Uncoil everything at once and here is when the ball is released
     (2.35, dict(waist_yaw_joint=UNCOIL, waist_pitch_joint=WAIST_PITCH,
                 right_shoulder_pitch_joint=-1.60, right_shoulder_roll_joint=-0.15,
                 right_elbow_joint=0.10,
-                left_shoulder_pitch_joint=0.85, left_elbow_joint=1.45)),
+                left_shoulder_pitch_joint=0.85, left_shoulder_roll_joint=0.40,
+                left_elbow_joint=1.45)),
 
-    # acompanhamento
+    # Follow through
     (3.05, dict(waist_yaw_joint=UNCOIL + 0.30, waist_pitch_joint=WAIST_PITCH * 0.3,
                 right_shoulder_pitch_joint=-0.45, right_elbow_joint=1.15,
-                left_shoulder_pitch_joint=0.55, left_elbow_joint=1.05)),
+                left_shoulder_pitch_joint=0.55, left_shoulder_roll_joint=0.35,
+                left_elbow_joint=1.05)),
 ]
 
 
@@ -73,7 +82,7 @@ def smooth(a, b, s):
 
 
 def pose_at(t):
-    """Interpola entre as poses-chave."""
+    """Interpolate between key poses."""
     if t <= WAYPOINTS[0][0]:
         return WAYPOINTS[0][1]
     for (t0, p0), (t1, p1) in zip(WAYPOINTS, WAYPOINTS[1:]):
@@ -85,7 +94,7 @@ def pose_at(t):
 
 
 def balance(ctrl):
-    """Corrige os tornozelos para manter o centro de massa sobre os pes."""
+    """Compute ankle torques to keep the robot balanced."""
     com = d.subtree_com[0]
     vcom = d.cvel[1, 3:6]
     support = 0.5 * (d.xpos[L_ANKLE] + d.xpos[R_ANKLE])
