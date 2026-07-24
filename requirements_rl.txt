@@ -1,0 +1,9 @@
+cat > requirements_rl.txt <<'EOF'
+numpy
+mujoco
+gymnasium
+stable-baselines3
+tensorboard
+tqdm
+rich
+EOF
