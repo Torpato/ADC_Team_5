@@ -1,3 +1,7 @@
+"""
+Run with:   python3 throw_ball.py
+"""
+
 import time
 import numpy as np
 import mujoco

@@ -1,16 +1,5 @@
-"""G1 a fazer um lancamento de baseball por cima do ombro (overhand).
-
-Fases, como num lancador real:
-  1. preparacao   - bracos afastam-se do corpo
-  2. levantamento - o braco sobe pela frente ate ficar vertical
-  3. armar        - cotovelo dobra, a mao (e a bola) ficam atras da cabeca;
-                    o tronco enrola e inclina-se ligeiramente para tras
-  4. chicote      - o tronco desenrola e flete para a frente, o cotovelo
-                    estende, a mao passa por cima do ombro -- a bola sai aqui
-  5. acompanhamento - o braco continua para baixo, cruzando o corpo
-  6. recuperacao  - volta a posicao de pe
-
-Correr com:   python3 pitch_overhand.py
+"""
+Run with:   python3 pitch_overhand.py
 """
 
 import time

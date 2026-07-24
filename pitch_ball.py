@@ -1,9 +1,5 @@
-"""G1 a fazer um lancamento de baseball, com o corpo todo.
-
-Sequencia: posicao inicial -> enrolar o tronco -> braco armado
--> desenrolar (anca, tronco, ombro, cotovelo) -> largada -> acompanhamento.
-
-Correr com:   python3 pitch_ball.py
+"""
+Run with:   python3 pitch_ball.py
 """
 
 import time

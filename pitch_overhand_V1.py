@@ -1,5 +1,5 @@
 """
-Running with:   python3 pitch_overhand_V1.py
+Run with:   python3 pitch_overhand_V1.py
 """
 
 import time

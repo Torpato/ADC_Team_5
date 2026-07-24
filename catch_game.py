@@ -1,9 +1,5 @@
-"""Dois G1 frente a frente a jogar a bola.
-
-O robo 1 lanca -> o robo 2 apanha -> o robo 2 lanca de volta ->
-o robo 1 apanha -> pequena pausa -> recomeca.
-
-Correr com:   python3 catch_game.py
+"""
+Run with:   python3 catch_game.py
 """
 
 import time

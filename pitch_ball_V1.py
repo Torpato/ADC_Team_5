@@ -1,3 +1,7 @@
+"""
+Run with:   python3 pitch_ball_V1.py
+"""
+
 import time
 import numpy as np
 import mujoco
