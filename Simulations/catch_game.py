@@ -2,12 +2,20 @@
 Run with:   python3 catch_game.py
 """
 
+import sys
 import time
+from pathlib import Path
+
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-MODEL = "Model/world_catch.xml"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
+
+from Mapper import get_model_path
+
+MODEL_PATH = get_model_path("world_catch.xml")
 
 T_RELEASE = 2.26   # instante da largada, contado no relogio de cada robo
 R_CATCH = 0.22     # a que distancia a mao "fecha" sobre a bola (m)
@@ -17,7 +25,7 @@ T_TIMEOUT = 14.0   # rede de seguranca: se algo correr mal, recomeca
 ORANGE = [0.85, 0.35, 0.15, 1]   # bola na mao
 GREEN = [0.20, 0.80, 0.30, 1]    # bola em voo
 
-m = mujoco.MjModel.from_xml_path(MODEL)
+m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
 d = mujoco.MjData(m)
 
 ACT = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, i): i for i in range(m.nu)}

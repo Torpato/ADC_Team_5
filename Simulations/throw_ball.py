@@ -3,11 +3,18 @@ Run with:   python3 throw_ball.py
 """
 
 import time
+from pathlib import Path
+
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-MODEL = "Model/g1_ball.xml"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
+
+from Mapper import get_model_path
+
+MODEL_PATH = get_model_path("g1_ball.xml")
 
 # --- momentos do lancamento (segundos) ---
 T_WIND = 1.00   # comeca a armar o braco
@@ -19,7 +26,7 @@ T_RESET = 6.00  # recomeca tudo
 WIND_SHOULDER, WIND_ELBOW = 1.2, 1.4    # braco atras
 THROW_SHOULDER, THROW_ELBOW = -1.6, 0.1  # braco a frente e em cima
 
-m = mujoco.MjModel.from_xml_path(MODEL)
+m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
 d = mujoco.MjData(m)
 
 names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(m.nu)]

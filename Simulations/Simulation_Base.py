@@ -3,10 +3,15 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 
 import mujoco
 
-from common import MODEL_PATH, load_model, reset_pose
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
+
+from Mapper import get_model_path
+from common import reset_pose
 
 
 def safe_name(name: str | None, fallback: str) -> str:
@@ -100,28 +105,6 @@ def launch_standalone_viewer(model_path: str) -> None:
 
     if completed.returncode != 0:
         raise RuntimeError(
-            f"Viewer exited with code {completed.returncode}"
-        )
-    """Launch MuJoCo's viewer in a separate process.
-
-    This intentionally avoids viewer.launch_passive(), whose additional
-    viewer thread can expose GLFW/OpenGL problems as a native segmentation
-    fault on some systems.
-    """
-    command = [
-        sys.executable,
-        "-m",
-        "mujoco.viewer",
-        f"--mjcf={MODEL_PATH}",
-    ]
-
-    print("\nOpening the standalone MuJoCo viewer.")
-    print("Close the viewer window to return to the terminal.")
-
-    completed = subprocess.run(command, check=False)
-
-    if completed.returncode != 0:
-        raise RuntimeError(
             "The standalone viewer exited abnormally with return code "
             f"{completed.returncode}. The model and headless physics may "
             "still be valid; this points to the local graphics/viewer stack."
@@ -144,20 +127,28 @@ def main() -> None:
     )
 
     parser.add_argument(
-    "--model",
-    type=str,
-    required=True,
-    help="Path to the MJCF/XML model.",
+        "--model",
+        type=str,
+        required=True,
+        help="Name of the MJCF/XML model file inside the Model directory.",
     )
-
 
     args = parser.parse_args()
 
     print("Loading model...", flush=True)
-    print("Loading model...", flush=True)
 
-    model_path = args.model
-    model = mujoco.MjModel.from_xml_path(model_path)
+    model_arg = Path(args.model)
+    if model_arg.parent == Path(""):
+        model_path = get_model_path(model_arg.name)
+    else:
+        model_path = model_arg
+
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Model file not found: {model_path}"
+        )
+
+    model = mujoco.MjModel.from_xml_path(str(model_path))
     data = mujoco.MjData(model)
 
     print("Resetting standing pose...", flush=True)
@@ -171,7 +162,7 @@ def main() -> None:
         run_headless(model, data, args.duration)
         return
 
-    launch_standalone_viewer(args.model)
+    launch_standalone_viewer(str(model_path))
 
 
 if __name__ == "__main__":

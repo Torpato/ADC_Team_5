@@ -1,18 +1,26 @@
 """
-Run with:   python3 pitch_overhand.py
+Run with:   python3 pitch_overhand_V1.py
 """
 
+import sys
 import time
+from pathlib import Path
+
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-MODEL = "Model/g1_ball.xml"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
+
+from Mapper import get_model_path
+
+MODEL_PATH = get_model_path("g1_ball.xml")
 
 T_RELEASE = 2.29   # instante da largada (muito sensivel: +-0.03 s muda tudo)
 T_RESET = 5.00     # recomeca o lancamento
 
-m = mujoco.MjModel.from_xml_path(MODEL)
+m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
 d = mujoco.MjData(m)
 
 names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(m.nu)]
@@ -37,7 +45,7 @@ WAYPOINTS = [
     # 2. levantar o braco pela frente ate ao alto
     (1.50, dict(right_shoulder_pitch_joint=-1.80, right_shoulder_roll_joint=-0.55,
                 right_elbow_joint=-0.30,
-                waist_yaw_joint=-0.20,
+                waist_yaw_joint=-0.15,
                 left_shoulder_pitch_joint=-0.30, left_shoulder_roll_joint=0.30,
                 left_elbow_joint=0.60)),
 
@@ -45,7 +53,7 @@ WAYPOINTS = [
     #    tronco enrolado e inclinado para tras
     (2.10, dict(right_shoulder_pitch_joint=-2.90, right_shoulder_roll_joint=-0.55,
                 right_elbow_joint=-0.95,
-                waist_yaw_joint=-0.40, waist_pitch_joint=-0.18,
+                waist_yaw_joint=-0.30, waist_pitch_joint=-0.38,
                 left_shoulder_pitch_joint=-0.80, left_shoulder_roll_joint=0.25,
                 left_elbow_joint=0.40)),
 
@@ -72,7 +80,7 @@ WAYPOINTS = [
 # equilibrio: o alvo do centro de massa fica um pouco A FRENTE dos
 # tornozelos, porque o pe tem muito mais "dedos" do que calcanhar --
 # o robo aguenta desequilibrios para a frente, mas quase nenhum para tras
-COM_OFFSET = 0.035
+COM_OFFSET = 0.075
 K_POS, K_VEL = 1.5, 0.3
 
 
@@ -113,14 +121,16 @@ def reset():
 
 reset()
 released = False
+prev_time = d.time
 
 with mujoco.viewer.launch_passive(m, d) as viewer:
     while viewer.is_running():
         step_start = time.time()
 
-        if d.time >= T_RESET:
+        if d.time >= T_RESET or d.time < prev_time:
             reset()
             released = False
+        prev_time = d.time
 
         ctrl = np.zeros(m.nu)
         for joint, value in pose_at(d.time).items():
