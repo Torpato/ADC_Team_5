@@ -1,31 +1,23 @@
-"""
-Run with:   python3 catch_game.py
+""""
+Run with:   python3 catch_game_V1.py
 """
 
-import sys
 import time
-from pathlib import Path
-
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "Python"))
-
-from Mapper import get_model_path
-
-MODEL_PATH = get_model_path("world_catch.xml")
+MODEL = "Model/world_catch.xml"
 
 T_RELEASE = 2.26   # instante da largada, contado no relogio de cada robo
 R_CATCH = 0.22     # a que distancia a mao "fecha" sobre a bola (m)
-T_PAUSA = 0.50     # pausa depois do ultimo apanho, antes de recomecar
+T_PAUSA = 1.50     # pausa depois do ultimo apanho, antes de recomecar
 T_TIMEOUT = 14.0   # rede de seguranca: se algo correr mal, recomeca
 
 ORANGE = [0.85, 0.35, 0.15, 1]   # bola na mao
 GREEN = [0.20, 0.80, 0.30, 1]    # bola em voo
 
-m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
+m = mujoco.MjModel.from_xml_path(MODEL)
 d = mujoco.MjData(m)
 
 ACT = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_ACTUATOR, i): i for i in range(m.nu)}
@@ -37,6 +29,8 @@ PELVIS = {r: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"r{r}_pelvis") for 
 ANKLES = {r: (mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"r{r}_left_ankle_roll_link"),
               mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"r{r}_right_ankle_roll_link"))
           for r in (1, 2)}
+BALL_Q = m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")]
+BALL_V = m.jnt_dofadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")]
 
 COM_OFFSET = 0.075
 K_POS, K_VEL = 1.5, 0.3
@@ -120,6 +114,17 @@ def balance(ctrl, r):
         ctrl[ACT[f"r{r}_{side}_ankle_roll_joint"]] -= ay * sgn
 
 
+def snap_to_hand(r):
+    """Poe a bola exatamente na posicao de equilibrio da soldadura da mao r
+    e anula a velocidade dela. Sem isto, a soldadura apanha a bola onde ela
+    estiver (ate 22 cm da mao) e puxa-a ao longo de varios frames -- e o
+    efeito de "passar e voltar para tras" que se ve no video."""
+    R = d.xmat[HAND[r]].reshape(3, 3)
+    d.qpos[BALL_Q:BALL_Q + 3] = d.xpos[HAND[r]] - R @ m.eq_data[GRIP[r], 3:6]
+    d.qvel[BALL_V:BALL_V + 6] = 0
+    mujoco.mj_forward(m, d)
+
+
 def dist_to_hand(r):
     return np.linalg.norm(d.xpos[BALL] - d.xpos[HAND[r]])
 
@@ -175,6 +180,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
             print(f"robo 1 lanca a {ball_speed():.2f} m/s")
 
         elif state == 1 and dist_to_hand(2) < R_CATCH:
+            snap_to_hand(2)
             d.eq_active[GRIP[2]] = 1
             m.geom_rgba[BALL_GEOM] = ORANGE
             t_catch = d.time
@@ -188,6 +194,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
             print(f"robo 2 devolve a {ball_speed():.2f} m/s")
 
         elif state == 3 and dist_to_hand(1) < R_CATCH:
+            snap_to_hand(1)
             d.eq_active[GRIP[1]] = 1
             m.geom_rgba[BALL_GEOM] = ORANGE
             t_done = d.time

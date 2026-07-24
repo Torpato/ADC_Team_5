@@ -1,4 +1,7 @@
-import sys
+"""
+Run with:   python3 pitch_ball_V1.py
+"""
+
 import time
 from pathlib import Path
 

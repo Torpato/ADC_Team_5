@@ -7,6 +7,7 @@
     <global azimuth="-140" elevation="-20"/>
     <headlight diffuse="0.6 0.6 0.6" specular="0.9 0.9 0.9"/>
     <rgba haze="0.15 0.25 0.35 1"/>
+    <quality shadowsize="0"/>
   </visual>
 
   <statistic extent="3" center="2.825 0 1"/>
@@ -23,7 +24,7 @@
   <asset>
     <texture type="skybox" colorspace="auto" builtin="flat" rgb1="0 0 0" rgb2="0 0 0" width="512" height="3072"/>
     <texture type="2d" colorspace="auto" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
-    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
     <mesh name="r1_pelvis" file="pelvis.STL"/>
     <mesh name="r1_pelvis_contour_link" file="pelvis_contour_link.STL"/>
     <mesh name="r1_left_hip_pitch_link" file="left_hip_pitch_link.STL"/>
