@@ -1,4 +1,7 @@
-import sys
+"""
+Run with:   python3 throw_ball.py
+"""
+
 import time
 from pathlib import Path
 
