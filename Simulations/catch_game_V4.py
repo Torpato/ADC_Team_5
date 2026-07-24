@@ -2,12 +2,19 @@
 Run with:   python3 catch_game_V4.py
 """
 
+import sys
 import time
+from pathlib import Path
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-MODEL = "Model/world_catch.xml"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Python"))
+
+from Mapper import get_model_path
+
+MODEL = str(get_model_path("world_catch.xml"))
 
 T_RELEASE = 2.26   # instante da largada, no relogio de cada lancamento
 R_CATCH = 0.22     # distancia a que a mao "fecha" sobre a bola (m)
