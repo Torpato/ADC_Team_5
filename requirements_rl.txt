@@ -1,9 +1,6 @@
-cat > requirements_rl.txt <<'EOF'
 numpy
 mujoco
 gymnasium
-stable-baselines3
+stable-baselines3[extra]
 tensorboard
 tqdm
-rich
-EOF
