@@ -1,10 +1,10 @@
 {
   "mode": "full_exchange",
-  "timesteps": 1500000,
-  "model": "C:\\ADC_Main\\ADC_Team_5\\Model\\world_catch.xml",
+  "timesteps": 1000000,
+  "model": "/Users/mili/Documents/AudiDevCamp/ADC_Team_5/Model/world_catch.xml",
   "seed": 2026,
   "frame_skip": 5,
-  "throw_noise": 0.0,
+  "throw_noise": 0.02,
   "minimum_release_time": 2.05,
   "maximum_release_time": 2.45,
   "reference_release_time": 2.26,

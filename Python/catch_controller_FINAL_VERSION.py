@@ -327,6 +327,7 @@ class TwoRobotCatchController:
         self.previous_catch_distance = float("inf")
         self.last_time = float(data.time)
         self.completed_exchanges = 0
+        self.starting_robot = 1
 
     def _required_id(self, object_type: mujoco.mjtObj, name: str) -> int:
         object_id = mujoco.mj_name2id(self.model, object_type, name)
@@ -428,14 +429,27 @@ class TwoRobotCatchController:
             )
         return output
 
-    def reset(self, *, reset_simulation: bool = True) -> None:
-        """Restore the initial held-ball state."""
+    def reset(
+        self,
+        *,
+        reset_simulation: bool = True,
+        starting_robot: int = 1,
+    ) -> None:
+        """Restore a held-ball state for robot 1 or robot 2.
+
+        ``starting_robot=1`` reproduces the original full exchange.
+        ``starting_robot=2`` starts directly from the return-throw phase, with
+        the ball welded to robot 2.  This is used by the PPO curriculum so the
+        second robot receives enough training episodes.
+        """
+
+        if starting_robot not in (1, 2):
+            raise ValueError("starting_robot must be 1 or 2.")
 
         if reset_simulation:
             mujoco.mj_resetData(self.model, self.data)
 
-        # Put both robots directly in the same resting pose used at the end of
-        # the sequence.  This avoids a discontinuity on the first control step.
+        # Start both robots from the stable resting pose.
         for robot in (1, 2):
             for joint_suffix, value in REST_POSE.items():
                 joint_id = self._required_id(
@@ -445,22 +459,46 @@ class TwoRobotCatchController:
                 qpos_address = int(self.model.jnt_qposadr[joint_id])
                 self.data.qpos[qpos_address] = float(value)
 
-        self.data.eq_active[self.grip_id[1]] = 1
-        self.data.eq_active[self.grip_id[2]] = 0
+        # When robot 2 starts with the ball, put it directly in the validated
+        # receiving/holding pose.  Its scripted throw then begins after the
+        # normal settle period.
+        if starting_robot == 2:
+            for joint_suffix, value in CATCH_POSE_BY_ROBOT[2].items():
+                joint_id = self._required_id(
+                    mujoco.mjtObj.mjOBJ_JOINT,
+                    f"r2_{joint_suffix}",
+                )
+                qpos_address = int(self.model.jnt_qposadr[joint_id])
+                self.data.qpos[qpos_address] = float(value)
+
+        self.data.eq_active[self.grip_id[1]] = int(starting_robot == 1)
+        self.data.eq_active[self.grip_id[2]] = int(starting_robot == 2)
         self.model.geom_rgba[self.ball_geom_id] = np.asarray(
             self.config.held_color,
             dtype=float,
         )
 
         mujoco.mj_forward(self.model, self.data)
-        self._snap_ball_to_hand(1)
+        self._snap_ball_to_hand(starting_robot)
 
-        self.state = CatchState.ROBOT_1_THROWING
-        self.cycle_start_time = float(self.data.time)
+        now = float(self.data.time)
+        self.starting_robot = int(starting_robot)
         self.flight_start = {1: 0.0, 2: 0.0}
         self.catch_time = {1: 0.0, 2: 0.0}
         self.previous_catch_distance = float("inf")
-        self.last_time = float(self.data.time)
+        self.last_time = now
+
+        if starting_robot == 1:
+            self.state = CatchState.ROBOT_1_THROWING
+            self.cycle_start_time = now
+        else:
+            self.state = CatchState.ROBOT_2_THROWING
+            self.catch_time[2] = now
+
+            # In ROBOT_2_THROWING, robot 1 still queries THROW_SEQUENCE.
+            # Shift its clock past the end of that sequence so it remains at
+            # REST_POSE until the return flight begins.
+            self.cycle_start_time = now - float(THROW_SEQUENCE[-1][0])
 
     def _apply_pose(self, control: np.ndarray, robot: int, pose: Pose) -> None:
         for joint_suffix, value in pose.items():
@@ -763,7 +801,10 @@ class TwoRobotCatchController:
                 + self.config.pause_time
             )
             if cycle_finished and self.config.auto_reset_cycle:
-                self.reset(reset_simulation=True)
+                self.reset(
+                    reset_simulation=True,
+                    starting_robot=self.starting_robot,
+                )
                 reset_performed = True
 
         # Save the current distance for closest-approach catch detection.
@@ -800,9 +841,15 @@ class TwoRobotCatchController:
         )
 
         if manual_reset:
-            self.reset(reset_simulation=False)
+            self.reset(
+                reset_simulation=False,
+                starting_robot=self.starting_robot,
+            )
         elif timeout and self.config.auto_reset_timeout:
-            self.reset(reset_simulation=True)
+            self.reset(
+                reset_simulation=True,
+                starting_robot=self.starting_robot,
+            )
 
         self.data.ctrl[:] = self.compute_control(residual_actions)
         event = self._transition_state_machine(release_commands)

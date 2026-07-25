@@ -38,6 +38,7 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.utils import get_schedule_fn
 
 from two_robot_catch_env import TwoRobotCatchEnv
 
@@ -47,14 +48,31 @@ PROJECT_ROOT = PYTHON_DIRECTORY.parent
 
 
 class ExchangeMetricsCallback(BaseCallback):
-    """Log rolling exchange and catch rates to TensorBoard."""
+    """Log overall and start-conditioned exchange metrics."""
 
     def __init__(self, window_size: int = 100) -> None:
         super().__init__()
         self.successes: deque[float] = deque(maxlen=window_size)
         self.catch_2: deque[float] = deque(maxlen=window_size)
         self.catch_1: deque[float] = deque(maxlen=window_size)
+        self.release_2: deque[float] = deque(maxlen=window_size)
+        self.return_success: deque[float] = deque(maxlen=window_size)
         self.falls: deque[float] = deque(maxlen=window_size)
+        self.start_2: deque[float] = deque(maxlen=window_size)
+        self.robot1_start_success: deque[float] = deque(
+            maxlen=window_size
+        )
+        self.robot2_start_success: deque[float] = deque(
+            maxlen=window_size
+        )
+
+    def _record_mean(
+        self,
+        name: str,
+        values: deque[float],
+    ) -> None:
+        if values:
+            self.logger.record(name, float(np.mean(values)))
 
     def _on_step(self) -> bool:
         dones = self.locals.get("dones", [])
@@ -64,37 +82,70 @@ class ExchangeMetricsCallback(BaseCallback):
             if not done:
                 continue
 
-            self.successes.append(float(info.get("success", False)))
+            success = float(info.get("success", False))
+            starting_robot = int(info.get("starting_robot", 1))
+
+            self.successes.append(success)
             self.catch_2.append(
                 float(info.get("caught_by_robot_2", False))
             )
             self.catch_1.append(
                 float(info.get("caught_by_robot_1", False))
             )
+            self.release_2.append(
+                float(info.get("released_by_robot_2", False))
+            )
+            self.return_success.append(
+                float(info.get("robot_2_return_success", False))
+            )
             self.falls.append(
                 float(bool(info.get("fallen_robots", ())))
             )
+            self.start_2.append(float(starting_robot == 2))
 
-        if self.successes:
-            self.logger.record(
-                "exchange/success_rate_100",
-                float(np.mean(self.successes)),
-            )
-            self.logger.record(
-                "exchange/robot_2_catch_rate_100",
-                float(np.mean(self.catch_2)),
-            )
-            self.logger.record(
-                "exchange/robot_1_catch_rate_100",
-                float(np.mean(self.catch_1)),
-            )
-            self.logger.record(
-                "exchange/fall_rate_100",
-                float(np.mean(self.falls)),
-            )
+            if starting_robot == 1:
+                self.robot1_start_success.append(success)
+            else:
+                self.robot2_start_success.append(success)
+
+        self._record_mean(
+            "exchange/success_rate_100",
+            self.successes,
+        )
+        self._record_mean(
+            "exchange/robot_2_catch_rate_100",
+            self.catch_2,
+        )
+        self._record_mean(
+            "exchange/robot_1_catch_rate_100",
+            self.catch_1,
+        )
+        self._record_mean(
+            "exchange/robot_2_release_rate_100",
+            self.release_2,
+        )
+        self._record_mean(
+            "exchange/robot_2_return_success_rate_100",
+            self.return_success,
+        )
+        self._record_mean(
+            "exchange/fall_rate_100",
+            self.falls,
+        )
+        self._record_mean(
+            "curriculum/robot_2_start_fraction_100",
+            self.start_2,
+        )
+        self._record_mean(
+            "curriculum/robot_1_start_success_100",
+            self.robot1_start_success,
+        )
+        self._record_mean(
+            "curriculum/robot_2_start_success_100",
+            self.robot2_start_success,
+        )
 
         return True
-
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -141,6 +192,47 @@ def parse_arguments() -> argparse.Namespace:
         "--skip-env-check",
         action="store_true",
     )
+    parser.add_argument(
+        "--robot2-start-probability",
+        type=float,
+        default=0.50,
+        help=(
+            "Probability that a training episode starts with the ball "
+            "already held by robot 2. Use 0.70 for the robot-2 focus stage."
+        ),
+    )
+    parser.add_argument(
+        "--eval-robot2-start-probability",
+        type=float,
+        default=0.50,
+        help=(
+            "Robot-2 start probability used only for evaluation. Keep "
+            "this at 0.50 to measure both directions fairly."
+        ),
+    )
+    parser.add_argument(
+        "--robot2-release-bonus",
+        type=float,
+        default=30.0,
+        help="Temporary curriculum reward when robot 2 releases the ball.",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help=(
+            "Override PPO learning rate. For fine-tuning an existing "
+            "robot-1 policy, 5e-5 is recommended."
+        ),
+    )
+    parser.add_argument(
+        "--overwrite-run",
+        action="store_true",
+        help=(
+            "Delete an existing run directory before training. Disabled "
+            "by default to protect previous results."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -159,6 +251,12 @@ def create_environment(
         throw_velocity_noise=(
             0.0 if evaluation else args.throw_noise
         ),
+        robot2_start_probability=(
+            args.eval_robot2_start_probability
+            if evaluation
+            else args.robot2_start_probability
+        ),
+        robot2_release_bonus=args.robot2_release_bonus,
     )
 
 
@@ -167,6 +265,22 @@ def main() -> None:
 
     if args.timesteps <= 0:
         raise ValueError("--timesteps must be positive.")
+    for name, probability in (
+        (
+            "--robot2-start-probability",
+            args.robot2_start_probability,
+        ),
+        (
+            "--eval-robot2-start-probability",
+            args.eval_robot2_start_probability,
+        ),
+    ):
+        if not 0.0 <= probability <= 1.0:
+            raise ValueError(f"{name} must be between 0 and 1.")
+    if args.robot2_release_bonus < 0.0:
+        raise ValueError("--robot2-release-bonus cannot be negative.")
+    if args.learning_rate is not None and args.learning_rate <= 0.0:
+        raise ValueError("--learning-rate must be positive.")
 
     run_name = (
         args.run_name
@@ -174,6 +288,18 @@ def main() -> None:
         else f"ppo_two_robot_{args.mode}"
     )
     run_directory = PROJECT_ROOT / "runs" / run_name
+
+    if run_directory.exists() and any(run_directory.iterdir()):
+        if not args.overwrite_run:
+            raise FileExistsError(
+                f"Run directory already exists and will not be overwritten: "
+                f"{run_directory}\nChoose a new --run-name, or use "
+                "--overwrite-run only when deletion is intentional."
+            )
+
+        import shutil
+        shutil.rmtree(run_directory)
+
     checkpoint_directory = run_directory / "checkpoints"
     best_directory = run_directory / "best"
     evaluation_directory = run_directory / "evaluation"
@@ -204,6 +330,11 @@ def main() -> None:
         "caught_by_robot_1",
         "forced_release_robot_1",
         "forced_release_robot_2",
+        "starting_robot",
+        "started_with_robot_2",
+        "released_by_robot_1",
+        "released_by_robot_2",
+        "robot_2_return_success",
     )
 
     training_environment = Monitor(
@@ -255,6 +386,19 @@ def main() -> None:
         "minimum_release_time": 2.05,
         "maximum_release_time": 2.45,
         "reference_release_time": 2.26,
+        "robot2_start_probability": (
+            args.robot2_start_probability
+        ),
+        "eval_robot2_start_probability": (
+            args.eval_robot2_start_probability
+        ),
+        "robot2_release_bonus": args.robot2_release_bonus,
+        "resume_model": (
+            str(args.resume.expanduser().resolve())
+            if args.resume is not None
+            else None
+        ),
+        "learning_rate_override": args.learning_rate,
         "controlled_joints": list(
             TwoRobotCatchEnv.CONTROLLED_JOINTS
         ),
@@ -288,6 +432,19 @@ def main() -> None:
             device=args.device,
             tensorboard_log=str(tensorboard_directory),
         )
+
+        if args.learning_rate is not None:
+            model.learning_rate = float(args.learning_rate)
+            model.lr_schedule = get_schedule_fn(
+                float(args.learning_rate)
+            )
+            for parameter_group in (
+                model.policy.optimizer.param_groups
+            ):
+                parameter_group["lr"] = float(
+                    args.learning_rate
+                )
+
         reset_num_timesteps = False
     else:
         if args.mode == "release_only":
@@ -298,6 +455,9 @@ def main() -> None:
             learning_rate = 1.0e-4
             n_steps = 4096
             entropy = 0.003
+
+        if args.learning_rate is not None:
+            learning_rate = float(args.learning_rate)
 
         model = PPO(
             policy="MlpPolicy",
@@ -332,6 +492,14 @@ def main() -> None:
     print(
         "  Observation size:",
         training_environment.observation_space.shape,
+    )
+    print(
+        "  Training robot-2 start probability:",
+        args.robot2_start_probability,
+    )
+    print(
+        "  Evaluation robot-2 start probability:",
+        args.eval_robot2_start_probability,
     )
     print("  Run directory:", run_directory)
 

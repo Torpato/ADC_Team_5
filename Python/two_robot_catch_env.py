@@ -94,6 +94,8 @@ class TwoRobotCatchEnv(gym.Env):
         catch_radius: float = 0.15,
         maximum_flight_time: float = 2.50,
         throw_velocity_noise: float = 0.0,
+        robot2_start_probability: float = 0.50,
+        robot2_release_bonus: float = 30.0,
     ) -> None:
         super().__init__()
 
@@ -113,6 +115,12 @@ class TwoRobotCatchEnv(gym.Env):
             raise ValueError("maximum_flight_time must be positive.")
         if throw_velocity_noise < 0.0:
             raise ValueError("throw_velocity_noise cannot be negative.")
+        if not 0.0 <= robot2_start_probability <= 1.0:
+            raise ValueError(
+                "robot2_start_probability must be between 0.0 and 1.0."
+            )
+        if robot2_release_bonus < 0.0:
+            raise ValueError("robot2_release_bonus cannot be negative.")
 
         self.mode = mode
         self.episode_time = float(episode_time)
@@ -122,6 +130,10 @@ class TwoRobotCatchEnv(gym.Env):
         self.reference_release_time = float(reference_release_time)
         self.maximum_flight_time = float(maximum_flight_time)
         self.throw_velocity_noise = float(throw_velocity_noise)
+        self.robot2_start_probability = float(
+            robot2_start_probability
+        )
+        self.robot2_release_bonus = float(robot2_release_bonus)
 
         selected_model_path = (
             Path(model_path) if model_path is not None else DEFAULT_MODEL_PATH
@@ -248,7 +260,9 @@ class TwoRobotCatchEnv(gym.Env):
         self.release_speeds = {1: np.nan, 2: np.nan}
         self.forced_release = {1: False, 2: False}
         self.caught = {1: False, 2: False}
+        self.catch_events = {1: False, 2: False}
         self.minimum_hand_distance = {1: np.inf, 2: np.inf}
+        self.starting_robot = 1
 
         self.success = False
         self.miss_reason = ""
@@ -326,6 +340,22 @@ class TwoRobotCatchEnv(gym.Env):
             return 2
         if self.controller.state == CatchState.BALL_TO_ROBOT_1:
             return 1
+        return None
+
+    def _active_residual_robot(self) -> int | None:
+        """Return the robot whose residual action currently affects physics."""
+
+        state = self.controller.state
+        if state in {
+            CatchState.ROBOT_1_THROWING,
+            CatchState.BALL_TO_ROBOT_1,
+        }:
+            return 1
+        if state in {
+            CatchState.ROBOT_2_THROWING,
+            CatchState.BALL_TO_ROBOT_2,
+        }:
+            return 2
         return None
 
     def _ball_has_floor_contact(self) -> bool:
@@ -477,7 +507,32 @@ class TwoRobotCatchEnv(gym.Env):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
 
-        self.controller.reset(reset_simulation=True)
+        options = options or {}
+        requested_start = options.get("start_robot")
+
+        if requested_start is None:
+            self.starting_robot = (
+                2
+                if self.np_random.random()
+                < self.robot2_start_probability
+                else 1
+            )
+        else:
+            try:
+                self.starting_robot = int(requested_start)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "options['start_robot'] must be 1 or 2."
+                ) from exc
+            if self.starting_robot not in (1, 2):
+                raise ValueError(
+                    "options['start_robot'] must be 1 or 2."
+                )
+
+        self.controller.reset(
+            reset_simulation=True,
+            starting_robot=self.starting_robot,
+        )
         self.controller.completed_exchanges = 0
         mujoco.mj_forward(self.model, self.data)
 
@@ -493,9 +548,19 @@ class TwoRobotCatchEnv(gym.Env):
         self.release_times = {1: np.nan, 2: np.nan}
         self.release_speeds = {1: np.nan, 2: np.nan}
         self.forced_release = {1: False, 2: False}
-        self.caught = {1: False, 2: False}
-        self.minimum_hand_distance = {1: np.inf, 2: np.inf}
 
+        # ``caught`` represents possession/progress in the observation.
+        # Robot 2 already possesses the ball in a robot-2-start episode.
+        self.caught = {
+            1: False,
+            2: bool(self.starting_robot == 2),
+        }
+
+        # ``catch_events`` records only catches that physically occurred
+        # during the current episode, keeping metrics unbiased.
+        self.catch_events = {1: False, 2: False}
+
+        self.minimum_hand_distance = {1: np.inf, 2: np.inf}
         self.success = False
         self.miss_reason = ""
         self.fallen = ()
@@ -509,6 +574,7 @@ class TwoRobotCatchEnv(gym.Env):
         action: np.ndarray,
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         canonical = self._canonical_action(action)
+        active_residual_robot = self._active_residual_robot()
 
         release_event_robot: int | None = None
         catch_event_robot: int | None = None
@@ -575,6 +641,7 @@ class TwoRobotCatchEnv(gym.Env):
                 robot = int(event.caught_robot)
                 catch_event_robot = robot
                 self.caught[robot] = True
+                self.catch_events[robot] = True
                 self._previous_flight_distance = np.nan
 
             if event.exchange_complete:
@@ -598,6 +665,7 @@ class TwoRobotCatchEnv(gym.Env):
             catch_event_robot=catch_event_robot,
             exchange_completed=exchange_completed,
             catch_progress=catch_progress,
+            active_residual_robot=active_residual_robot,
         )
 
         self.episode_steps += 1
@@ -638,6 +706,7 @@ class TwoRobotCatchEnv(gym.Env):
         catch_event_robot: int | None,
         exchange_completed: bool,
         catch_progress: float,
+        active_residual_robot: int | None,
     ) -> float:
         reward = -0.002
 
@@ -688,32 +757,35 @@ class TwoRobotCatchEnv(gym.Env):
 
         reward += 8.0 * catch_progress
 
-        residual_values = canonical[
-            : 2 * self.JOINTS_PER_ROBOT
-        ]
-        previous_residuals = self.previous_action[
-            : 2 * self.JOINTS_PER_ROBOT
-        ]
+        # Penalise only the residual block that actually affected physics.
+        # Previously both 9-action blocks were penalised at every step, which
+        # pushed robot 2's outputs toward zero even during robot-1 episodes.
+        if active_residual_robot is not None:
+            start = (
+                (active_residual_robot - 1)
+                * self.JOINTS_PER_ROBOT
+            )
+            stop = start + self.JOINTS_PER_ROBOT
+            residual_values = canonical[start:stop]
+            previous_residuals = self.previous_action[start:stop]
 
-        # In release_only mode these outputs are masked, but a small penalty
-        # teaches the transferable policy to keep them near zero.
-        residual_penalty_weight = (
-            0.004 if self.mode == "full_exchange" else 0.001
-        )
-        rate_penalty_weight = (
-            0.002 if self.mode == "full_exchange" else 0.0005
-        )
+            residual_penalty_weight = (
+                0.004 if self.mode == "full_exchange" else 0.001
+            )
+            rate_penalty_weight = (
+                0.002 if self.mode == "full_exchange" else 0.0005
+            )
 
-        reward -= residual_penalty_weight * float(
-            np.mean(np.square(residual_values))
-        )
-        reward -= rate_penalty_weight * float(
-            np.mean(
-                np.square(
-                    residual_values - previous_residuals
+            reward -= residual_penalty_weight * float(
+                np.mean(np.square(residual_values))
+            )
+            reward -= rate_penalty_weight * float(
+                np.mean(
+                    np.square(
+                        residual_values - previous_residuals
+                    )
                 )
             )
-        )
 
         if release_event_robot is not None:
             release_time = float(
@@ -732,6 +804,12 @@ class TwoRobotCatchEnv(gym.Env):
 
             if self.forced_release[release_event_robot]:
                 reward -= 8.0
+
+            # Give the under-trained return throw an explicit milestone.
+            # This is temporary curriculum shaping; the final objective still
+            # remains robot 1 catching the return and completing the exchange.
+            if release_event_robot == 2:
+                reward += self.robot2_release_bonus
 
         if catch_event_robot == 2:
             reward += 60.0
@@ -872,12 +950,33 @@ class TwoRobotCatchEnv(gym.Env):
     def _get_info(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
+            "robot2_start_probability": float(
+                self.robot2_start_probability
+            ),
             "state": int(self.controller.state),
             "state_name": self.controller.state.name,
             "success": bool(self.success),
             "completed_exchange": bool(self.success),
-            "caught_by_robot_2": bool(self.caught[2]),
-            "caught_by_robot_1": bool(self.caught[1]),
+            "starting_robot": int(self.starting_robot),
+            "started_with_robot_2": bool(
+                self.starting_robot == 2
+            ),
+            "caught_by_robot_2": bool(
+                self.catch_events[2]
+            ),
+            "caught_by_robot_1": bool(
+                self.catch_events[1]
+            ),
+            "released_by_robot_1": bool(
+                np.isfinite(self.release_times[1])
+            ),
+            "released_by_robot_2": bool(
+                np.isfinite(self.release_times[2])
+            ),
+            "robot_2_return_success": bool(
+                np.isfinite(self.release_times[2])
+                and self.catch_events[1]
+            ),
             "release_time_robot_1": self._safe_metric(
                 self.release_times[1]
             ),

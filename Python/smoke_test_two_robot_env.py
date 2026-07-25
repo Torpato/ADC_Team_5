@@ -1,15 +1,4 @@
-"""Headless smoke test for the two-robot Gymnasium environment.
-
-This test does not require a trained PPO model. It checks:
-
-1. Gymnasium API compatibility.
-2. Model/controller loading.
-3. A scripted zero-residual exchange using the reference release time.
-
-Run:
-    python Python/smoke_test_two_robot_env.py --mode release_only
-    python Python/smoke_test_two_robot_env.py --mode full_exchange
-"""
+"""Headless smoke test for both curriculum starting states."""
 
 from __future__ import annotations
 
@@ -30,9 +19,24 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=("release_only", "full_exchange"),
-        default="release_only",
+        default="full_exchange",
     )
-    parser.add_argument("--episodes", type=int, default=3)
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=3,
+        help="Episodes per selected starting robot.",
+    )
+    parser.add_argument(
+        "--start-robot",
+        choices=("both", "1", "2", "random"),
+        default="both",
+    )
+    parser.add_argument(
+        "--robot2-start-probability",
+        type=float,
+        default=0.50,
+    )
     parser.add_argument(
         "--model",
         type=Path,
@@ -49,58 +53,87 @@ def main() -> None:
         mode=args.mode,
         frame_skip=5,
         throw_velocity_noise=0.0,
+        robot2_start_probability=args.robot2_start_probability,
     )
 
     print("Checking Gymnasium API...")
     check_env(environment, warn=True)
     print("Gymnasium check passed.")
 
-    successes = 0
+    if args.start_robot == "both":
+        starts: list[int | None] = [1, 2]
+    elif args.start_robot == "random":
+        starts = [None]
+    else:
+        starts = [int(args.start_robot)]
 
-    for episode in range(1, args.episodes + 1):
-        observation, _ = environment.reset()
-        del observation
+    total_successes = 0
+    total_episodes = 0
 
-        terminated = False
-        truncated = False
-        total_reward = 0.0
-        info = {}
+    for requested_start in starts:
+        successes = 0
+        label = (
+            "random"
+            if requested_start is None
+            else str(requested_start)
+        )
+        print(f"\nStarting robot: {label}")
 
-        while not (terminated or truncated):
-            action = environment.baseline_action()
-            (
-                _,
-                reward,
-                terminated,
-                truncated,
-                info,
-            ) = environment.step(action)
-            total_reward += float(reward)
+        for episode in range(1, args.episodes + 1):
+            options = (
+                None
+                if requested_start is None
+                else {"start_robot": requested_start}
+            )
+            _, reset_info = environment.reset(options=options)
+            actual_start = int(reset_info["starting_robot"])
 
-        successes += int(bool(info["success"]))
+            terminated = False
+            truncated = False
+            total_reward = 0.0
+            info: dict[str, object] = reset_info
+
+            while not (terminated or truncated):
+                action = environment.baseline_action()
+                (
+                    _,
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                ) = environment.step(action)
+                total_reward += float(reward)
+
+            success = int(bool(info["success"]))
+            successes += success
+            total_successes += success
+            total_episodes += 1
+
+            print(
+                f"Episode {episode}: "
+                f"start={actual_start} | "
+                f"success={info['success']} | "
+                f"released2={info['released_by_robot_2']} | "
+                f"return={info['robot_2_return_success']} | "
+                f"reward={total_reward:.2f} | "
+                f"miss={info['miss_reason'] or 'none'}"
+            )
 
         print(
-            f"Episode {episode}: "
-            f"success={info['success']} | "
-            f"catch2={info['caught_by_robot_2']} | "
-            f"catch1={info['caught_by_robot_1']} | "
-            f"reward={total_reward:.2f} | "
-            f"miss={info['miss_reason'] or 'none'} | "
-            f"falls={info['fallen_robots'] or 'none'}"
+            f"Success rate for start {label}: "
+            f"{successes}/{args.episodes}"
         )
 
     environment.close()
-
     print(
-        f"\nBaseline success rate: "
-        f"{successes}/{args.episodes}"
+        f"\nOverall baseline success rate: "
+        f"{total_successes}/{total_episodes}"
     )
 
-    if successes == 0:
+    if total_successes == 0:
         raise SystemExit(
-            "The environment loads, but the deterministic baseline "
-            "did not complete an exchange. Run the visual baseline and "
-            "retune release/catch parameters before PPO training."
+            "The environment loads, but neither starting state "
+            "completed its target exchange."
         )
 
 
