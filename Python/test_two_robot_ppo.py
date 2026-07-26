@@ -62,6 +62,12 @@ def parse_arguments() -> argparse.Namespace:
         help="Penalty used for contact with robot 1's left arm.",
     )
     parser.add_argument(
+        "--head-contact-penalty",
+        type=float,
+        default=180.0,
+        help="Penalty used for contact with robot 1's head.",
+    )
+    parser.add_argument(
         "--stochastic",
         action="store_true",
     )
@@ -175,6 +181,22 @@ def print_episode(
         "  Wrong-arm body:",
         info["wrong_arm_contact_body"] or "none",
     )
+    print("  Head contact:", info["head_contact"])
+    print(
+        "  Head contact mesh:",
+        info["head_contact_mesh"] or "none",
+    )
+    print(
+        "  Head contact body:",
+        info["head_contact_body"] or "none",
+    )
+    print(
+        "  Minimum head distance:",
+        format_value(
+            info["minimum_head_distance_robot_1"]
+        ),
+        "m",
+    )
     print(
         "  Robot 1 release:",
         format_value(info["release_time_robot_1"]),
@@ -231,13 +253,16 @@ def main() -> None:
             configuration.get("robot2_release_bonus", 30.0)
         ),
         wrong_arm_contact_penalty=args.wrong_arm_contact_penalty,
+        head_contact_penalty=args.head_contact_penalty,
         terminate_on_wrong_arm_contact=True,
+        terminate_on_head_contact=True,
     )
 
     print("Loading policy:")
     print(policy_path)
     print("Robot-2 random-start probability:", probability)
     print("Wrong-arm contact penalty:", args.wrong_arm_contact_penalty)
+    print("Head-contact penalty:", args.head_contact_penalty)
 
     model = PPO.load(str(policy_path), env=environment)
     observation, _ = reset_environment(

@@ -3,18 +3,18 @@
 Examples
 --------
 Quick validation:
-    python Python/train_two_robot_ppo_clean_right_hand.py \
+    python Python/train_two_robot_ppo.py \
         --mode release_only \
         --timesteps 20000 \
         --run-name catch_release_smoke
 
 Release timing:
-    python Python/train_two_robot_ppo_clean_right_hand.py \
+    python Python/train_two_robot_ppo.py \
         --mode release_only \
         --timesteps 300000
 
 Continue the release policy and enable throwing/receiving corrections:
-    python Python/train_two_robot_ppo_clean_right_hand.py \
+    python Python/train_two_robot_ppo.py \
         --mode full_exchange \
         --timesteps 1000000 \
         --throw-noise 0.02 \
@@ -64,6 +64,9 @@ class ExchangeMetricsCallback(BaseCallback):
         self.wrong_arm_contacts: deque[float] = deque(
             maxlen=window_size
         )
+        self.head_contacts: deque[float] = deque(
+            maxlen=window_size
+        )
         self.robot1_start_success: deque[float] = deque(
             maxlen=window_size
         )
@@ -110,6 +113,9 @@ class ExchangeMetricsCallback(BaseCallback):
             self.wrong_arm_contacts.append(
                 float(info.get("wrong_arm_contact", False))
             )
+            self.head_contacts.append(
+                float(info.get("head_contact", False))
+            )
 
             if starting_robot == 1:
                 self.robot1_start_success.append(success)
@@ -143,6 +149,10 @@ class ExchangeMetricsCallback(BaseCallback):
         self._record_mean(
             "exchange/wrong_arm_contact_rate_100",
             self.wrong_arm_contacts,
+        )
+        self._record_mean(
+            "exchange/head_contact_rate_100",
+            self.head_contacts,
         )
         self._record_mean(
             "curriculum/robot_2_start_fraction_100",
@@ -247,6 +257,15 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--head-contact-penalty",
+        type=float,
+        default=180.0,
+        help=(
+            "Penalty applied when the return throw touches robot 1's "
+            "head before a valid right-hand catch."
+        ),
+    )
+    parser.add_argument(
         "--overwrite-run",
         action="store_true",
         help=(
@@ -279,7 +298,9 @@ def create_environment(
         ),
         robot2_release_bonus=args.robot2_release_bonus,
         wrong_arm_contact_penalty=args.wrong_arm_contact_penalty,
+        head_contact_penalty=args.head_contact_penalty,
         terminate_on_wrong_arm_contact=True,
+        terminate_on_head_contact=True,
     )
 
 
@@ -307,6 +328,10 @@ def main() -> None:
     if args.wrong_arm_contact_penalty < 0.0:
         raise ValueError(
             "--wrong-arm-contact-penalty cannot be negative."
+        )
+    if args.head_contact_penalty < 0.0:
+        raise ValueError(
+            "--head-contact-penalty cannot be negative."
         )
 
     run_name = (
@@ -364,6 +389,9 @@ def main() -> None:
         "robot_2_return_success",
         "wrong_arm_contact",
         "wrong_arm_contact_penalty",
+        "head_contact",
+        "head_contact_penalty",
+        "minimum_head_distance_robot_1",
     )
 
     training_environment = Monitor(
@@ -425,7 +453,9 @@ def main() -> None:
         "wrong_arm_contact_penalty": (
             args.wrong_arm_contact_penalty
         ),
+        "head_contact_penalty": args.head_contact_penalty,
         "terminate_on_wrong_arm_contact": True,
+        "terminate_on_head_contact": True,
         "resume_model": (
             str(args.resume.expanduser().resolve())
             if args.resume is not None
@@ -537,6 +567,10 @@ def main() -> None:
     print(
         "  Wrong-arm contact penalty:",
         args.wrong_arm_contact_penalty,
+    )
+    print(
+        "  Head-contact penalty:",
+        args.head_contact_penalty,
     )
     print("  Run directory:", run_directory)
 

@@ -2,7 +2,7 @@
 
 This version keeps the original deterministic physics parameters. It adds only
 the robot-1 receiving-arm correction, a smaller right-hand catch window, and an
-explicit penalty when the returning ball touches robot 1's left arm.
+explicit penalties when the returning ball touches robot 1's left arm or head.
 
 This environment is designed for:
 
@@ -101,7 +101,9 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
         robot2_start_probability: float = 0.50,
         robot2_release_bonus: float = 30.0,
         wrong_arm_contact_penalty: float = 120.0,
+        head_contact_penalty: float = 180.0,
         terminate_on_wrong_arm_contact: bool = True,
+        terminate_on_head_contact: bool = True,
     ) -> None:
         super().__init__()
 
@@ -131,6 +133,10 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
             raise ValueError(
                 "wrong_arm_contact_penalty cannot be negative."
             )
+        if head_contact_penalty < 0.0:
+            raise ValueError(
+                "head_contact_penalty cannot be negative."
+            )
 
         self.mode = mode
         self.episode_time = float(episode_time)
@@ -147,8 +153,14 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
         self.wrong_arm_contact_penalty = float(
             wrong_arm_contact_penalty
         )
+        self.head_contact_penalty = float(
+            head_contact_penalty
+        )
         self.terminate_on_wrong_arm_contact = bool(
             terminate_on_wrong_arm_contact
+        )
+        self.terminate_on_head_contact = bool(
+            terminate_on_head_contact
         )
 
         selected_model_path = (
@@ -208,6 +220,63 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
             print(
                 "Warning: no robot-1 left-arm collision geometries were "
                 "found. Wrong-arm contact detection is disabled."
+            )
+
+        # The head mesh in world_catch.xml is attached to r1_torso_link,
+        # so body-name matching is not sufficient.  We identify the collision
+        # geometry through its mesh name (for example, r1_head_link).
+        self.robot_1_head_geom_ids: set[int] = set()
+        self.robot_1_head_geom_meshes: dict[int, str] = {}
+        self.robot_1_head_geom_bodies: dict[int, str] = {}
+
+        for geom_id in range(self.model.ngeom):
+            data_id = int(self.model.geom_dataid[geom_id])
+            mesh_name = None
+
+            if data_id >= 0:
+                mesh_name = mujoco.mj_id2name(
+                    self.model,
+                    mujoco.mjtObj.mjOBJ_MESH,
+                    data_id,
+                )
+
+            geom_name = mujoco.mj_id2name(
+                self.model,
+                mujoco.mjtObj.mjOBJ_GEOM,
+                geom_id,
+            )
+            searchable_name = (
+                mesh_name
+                if mesh_name is not None
+                else (geom_name or "")
+            ).lower()
+
+            if (
+                searchable_name.startswith("r1_")
+                and (
+                    "head" in searchable_name
+                    or "face" in searchable_name
+                )
+            ):
+                body_id = int(self.model.geom_bodyid[geom_id])
+                body_name = mujoco.mj_id2name(
+                    self.model,
+                    mujoco.mjtObj.mjOBJ_BODY,
+                    body_id,
+                )
+
+                self.robot_1_head_geom_ids.add(int(geom_id))
+                self.robot_1_head_geom_meshes[int(geom_id)] = (
+                    mesh_name or geom_name or "unknown"
+                )
+                self.robot_1_head_geom_bodies[int(geom_id)] = (
+                    body_name or "unknown"
+                )
+
+        if not self.robot_1_head_geom_ids:
+            print(
+                "Warning: no robot-1 head collision geometries were "
+                "found. Head-contact detection is disabled."
             )
 
         self.pelvis_ids = {
@@ -317,6 +386,12 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
         self.wrong_arm_contact = False
         self.wrong_arm_contact_body = ""
         self.wrong_arm_contact_geom_id = -1
+
+        self.head_contact = False
+        self.head_contact_geom_id = -1
+        self.head_contact_mesh = ""
+        self.head_contact_body = ""
+        self.minimum_head_distance = np.inf
 
         self.success = False
         self.miss_reason = ""
@@ -469,6 +544,103 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
         self.wrong_arm_contact_body = str(body_name)
         self.success = False
         self.miss_reason = "ball_hit_robot_1_left_arm"
+        return True
+
+    def _ball_robot_1_head_contact(
+        self,
+    ) -> tuple[bool, int, str, str]:
+        """Return contact between the ball and robot 1's head mesh.
+
+        The head geometry is identified by mesh name because the Unitree
+        model attaches the head mesh to the torso body.
+        """
+
+        if not self.robot_1_head_geom_ids:
+            return False, -1, "", ""
+
+        for contact_index in range(self.data.ncon):
+            contact = self.data.contact[contact_index]
+            geom_1 = int(contact.geom1)
+            geom_2 = int(contact.geom2)
+
+            if geom_1 == self.ball_geom_id:
+                other_geom = geom_2
+            elif geom_2 == self.ball_geom_id:
+                other_geom = geom_1
+            else:
+                continue
+
+            if other_geom in self.robot_1_head_geom_ids:
+                return (
+                    True,
+                    other_geom,
+                    self.robot_1_head_geom_meshes.get(
+                        other_geom,
+                        "unknown",
+                    ),
+                    self.robot_1_head_geom_bodies.get(
+                        other_geom,
+                        "unknown",
+                    ),
+                )
+
+        return False, -1, "", ""
+
+    def _distance_to_robot_1_head(self) -> float:
+        """Return the minimum ball-to-head-geometry-centre distance."""
+
+        if not self.robot_1_head_geom_ids:
+            return float("nan")
+
+        ball_position = self.data.xpos[self.ball_body_id]
+        return float(
+            min(
+                np.linalg.norm(
+                    ball_position - self.data.geom_xpos[geom_id]
+                )
+                for geom_id in self.robot_1_head_geom_ids
+            )
+        )
+
+    def _mark_head_contact_if_present(
+        self,
+        *,
+        force_check: bool = False,
+    ) -> bool:
+        """Record a failed return throw that touches robot 1's head.
+
+        ``force_check`` is used after ``mj_step``.  The controller may have
+        activated grip1 and changed to EXCHANGE_COMPLETE during the same
+        simulation step, but a simultaneous head collision must still
+        invalidate the catch.
+        """
+
+        if (
+            not force_check
+            and self.controller.state != CatchState.BALL_TO_ROBOT_1
+        ):
+            return False
+
+        touched, geom_id, mesh_name, body_name = (
+            self._ball_robot_1_head_contact()
+        )
+        if not touched:
+            return False
+
+        self.head_contact = True
+        self.head_contact_geom_id = int(geom_id)
+        self.head_contact_mesh = str(mesh_name)
+        self.head_contact_body = str(body_name)
+
+        # Cancel a catch that may have been registered during this control
+        # step.  The episode is terminated as an invalid return reception.
+        self.success = False
+        self.caught[1] = False
+        self.catch_events[1] = False
+        self.miss_reason = "ball_hit_robot_1_head"
+
+        # Do not leave the ball welded to the hand after an invalid catch.
+        self.data.eq_active[self.controller.grip_id[1]] = 0
         return True
 
     def _ball_has_floor_contact(self) -> bool:
@@ -677,6 +849,12 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
         self.wrong_arm_contact = False
         self.wrong_arm_contact_body = ""
         self.wrong_arm_contact_geom_id = -1
+
+        self.head_contact = False
+        self.head_contact_geom_id = -1
+        self.head_contact_mesh = ""
+        self.head_contact_body = ""
+        self.minimum_head_distance = np.inf
         self.success = False
         self.miss_reason = ""
         self.fallen = ()
@@ -704,6 +882,10 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
                 if self.terminate_on_wrong_arm_contact:
                     break
 
+            if self._mark_head_contact_if_present():
+                if self.terminate_on_head_contact:
+                    break
+
             receiver_before = self._current_receiver()
             if receiver_before is not None:
                 distance_before = self.controller.distance_to_hand(
@@ -713,6 +895,14 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
                     self.minimum_hand_distance[receiver_before],
                     distance_before,
                 )
+
+                if receiver_before == 1:
+                    head_distance = self._distance_to_robot_1_head()
+                    if np.isfinite(head_distance):
+                        self.minimum_head_distance = min(
+                            self.minimum_head_distance,
+                            head_distance,
+                        )
 
                 if np.isfinite(self._previous_flight_distance):
                     catch_progress += float(
@@ -773,6 +963,22 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
             mujoco.mj_step(self.model, self.data)
 
             # Check contacts generated by the physics step that has just run.
+            # ``receiver_before`` remains equal to 1 even if the controller
+            # activated grip1 and changed to EXCHANGE_COMPLETE immediately
+            # before the physics step.
+            if receiver_before == 1:
+                head_contact_detected = (
+                    self._mark_head_contact_if_present(
+                        force_check=True,
+                    )
+                )
+                if head_contact_detected:
+                    catch_event_robot = None
+                    exchange_completed = False
+
+                    if self.terminate_on_head_contact:
+                        break
+
             if (
                 not self.success
                 and self._mark_wrong_arm_contact_if_present()
@@ -949,7 +1155,9 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
         if exchange_completed:
             reward += 100.0
 
-        if self.miss_reason == "ball_hit_robot_1_left_arm":
+        if self.miss_reason == "ball_hit_robot_1_head":
+            reward -= self.head_contact_penalty
+        elif self.miss_reason == "ball_hit_robot_1_left_arm":
             reward -= self.wrong_arm_contact_penalty
         elif self.miss_reason:
             reward -= 80.0
@@ -1140,6 +1348,18 @@ class TwoRobotCatchCleanRightHandEnv(gym.Env):
             ),
             "wrong_arm_contact_penalty": float(
                 self.wrong_arm_contact_penalty
+            ),
+            "head_contact": bool(self.head_contact),
+            "head_contact_geom_id": int(
+                self.head_contact_geom_id
+            ),
+            "head_contact_mesh": self.head_contact_mesh,
+            "head_contact_body": self.head_contact_body,
+            "head_contact_penalty": float(
+                self.head_contact_penalty
+            ),
+            "minimum_head_distance_robot_1": self._safe_metric(
+                self.minimum_head_distance
             ),
             "miss_reason": self.miss_reason,
             "fallen_robots": tuple(self.fallen),

@@ -3,7 +3,7 @@
 The controller contains no viewer loop and does not call ``mj_step``.  It can
 therefore be reused by:
 
-* ``Simulations/catch_game_FINAL_VERSION.py`` for the visual demonstration;
+* ``Python/catch_game_FINAL_VERSION.py`` for the visual demonstration;
 * a headless evaluator;
 * a future Gymnasium/PPO environment.
 

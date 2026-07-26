@@ -45,6 +45,11 @@ def parse_arguments() -> argparse.Namespace:
         default=120.0,
     )
     parser.add_argument(
+        "--head-contact-penalty",
+        type=float,
+        default=180.0,
+    )
+    parser.add_argument(
         "--model",
         type=Path,
         default=PROJECT_ROOT / "Model" / "world_catch.xml",
@@ -62,7 +67,9 @@ def main() -> None:
         throw_velocity_noise=0.0,
         robot2_start_probability=args.robot2_start_probability,
         wrong_arm_contact_penalty=args.wrong_arm_contact_penalty,
+        head_contact_penalty=args.head_contact_penalty,
         terminate_on_wrong_arm_contact=True,
+        terminate_on_head_contact=True,
     )
 
     print("Checking Gymnasium API...")
@@ -126,6 +133,9 @@ def main() -> None:
                 f"return={info['robot_2_return_success']} | "
                 f"wrong_arm={info['wrong_arm_contact']} | "
                 f"wrong_body={info['wrong_arm_contact_body'] or 'none'} | "
+                f"head={info['head_contact']} | "
+                f"head_mesh={info['head_contact_mesh'] or 'none'} | "
+                f"min_head={info['minimum_head_distance_robot_1']:.3f} | "
                 f"reward={total_reward:.2f} | "
                 f"miss={info['miss_reason'] or 'none'}"
             )
