@@ -7,8 +7,8 @@ from pathlib import Path
 
 from stable_baselines3.common.env_checker import check_env
 
-from two_robot_catch_env_clean_right_hand import (
-    TwoRobotCatchCleanRightHandEnv,
+from two_robot_catch_env import (
+    TwoRobotCatchEnv,
 )
 
 
@@ -55,7 +55,7 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> None:
     args = parse_arguments()
 
-    environment = TwoRobotCatchCleanRightHandEnv(
+    environment = TwoRobotCatchEnv(
         model_path=args.model,
         mode=args.mode,
         frame_skip=5,

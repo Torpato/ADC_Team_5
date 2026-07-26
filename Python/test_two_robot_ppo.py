@@ -12,8 +12,8 @@ import mujoco.viewer
 import numpy as np
 from stable_baselines3 import PPO
 
-from two_robot_catch_env_clean_right_hand import (
-    TwoRobotCatchCleanRightHandEnv,
+from two_robot_catch_env import (
+    TwoRobotCatchEnv,
 )
 
 
@@ -111,7 +111,7 @@ def load_configuration(args: argparse.Namespace) -> dict[str, object]:
 
 
 def reset_environment(
-    environment: TwoRobotCatchCleanRightHandEnv,
+    environment: TwoRobotCatchEnv,
     start_robot: str,
 ) -> tuple[np.ndarray, dict[str, object]]:
     options = None
@@ -212,7 +212,7 @@ def main() -> None:
         )
     )
 
-    environment = TwoRobotCatchCleanRightHandEnv(
+    environment = TwoRobotCatchEnv(
         model_path=args.model,
         mode=args.mode,
         frame_skip=int(configuration.get("frame_skip", 5)),

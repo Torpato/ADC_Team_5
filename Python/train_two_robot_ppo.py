@@ -40,8 +40,8 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import get_schedule_fn
 
-from two_robot_catch_env_clean_right_hand import (
-    TwoRobotCatchCleanRightHandEnv,
+from two_robot_catch_env import (
+    TwoRobotCatchEnv,
 )
 
 
@@ -261,8 +261,8 @@ def create_environment(
     args: argparse.Namespace,
     *,
     evaluation: bool,
-) -> TwoRobotCatchCleanRightHandEnv:
-    return TwoRobotCatchCleanRightHandEnv(
+) -> TwoRobotCatchEnv:
+    return TwoRobotCatchEnv(
         model_path=args.model,
         mode=args.mode,
         frame_skip=args.frame_skip,
@@ -433,10 +433,10 @@ def main() -> None:
         ),
         "learning_rate_override": args.learning_rate,
         "controlled_joints": list(
-            TwoRobotCatchCleanRightHandEnv.CONTROLLED_JOINTS
+            TwoRobotCatchEnv.CONTROLLED_JOINTS
         ),
         "residual_scales": (
-            TwoRobotCatchCleanRightHandEnv.RESIDUAL_SCALES.tolist()
+            TwoRobotCatchEnv.RESIDUAL_SCALES.tolist()
         ),
         "action_size": int(
             training_environment.action_space.shape[0]

@@ -35,7 +35,7 @@ from gymnasium import spaces
 import mujoco
 import numpy as np
 
-from catch_controller_clean_right_hand import (
+from catch_controller_FINAL_VERSION import (
     CatchControllerConfig,
     CatchState,
     TwoRobotCatchController,
