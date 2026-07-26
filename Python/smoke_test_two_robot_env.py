@@ -7,7 +7,9 @@ from pathlib import Path
 
 from stable_baselines3.common.env_checker import check_env
 
-from two_robot_catch_env import TwoRobotCatchEnv
+from two_robot_catch_env_clean_right_hand import (
+    TwoRobotCatchCleanRightHandEnv,
+)
 
 
 PYTHON_DIRECTORY = Path(__file__).resolve().parent
@@ -38,6 +40,11 @@ def parse_arguments() -> argparse.Namespace:
         default=0.50,
     )
     parser.add_argument(
+        "--wrong-arm-contact-penalty",
+        type=float,
+        default=120.0,
+    )
+    parser.add_argument(
         "--model",
         type=Path,
         default=PROJECT_ROOT / "Model" / "world_catch.xml",
@@ -48,12 +55,14 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> None:
     args = parse_arguments()
 
-    environment = TwoRobotCatchEnv(
+    environment = TwoRobotCatchCleanRightHandEnv(
         model_path=args.model,
         mode=args.mode,
         frame_skip=5,
         throw_velocity_noise=0.0,
         robot2_start_probability=args.robot2_start_probability,
+        wrong_arm_contact_penalty=args.wrong_arm_contact_penalty,
+        terminate_on_wrong_arm_contact=True,
     )
 
     print("Checking Gymnasium API...")
@@ -115,6 +124,8 @@ def main() -> None:
                 f"success={info['success']} | "
                 f"released2={info['released_by_robot_2']} | "
                 f"return={info['robot_2_return_success']} | "
+                f"wrong_arm={info['wrong_arm_contact']} | "
+                f"wrong_body={info['wrong_arm_contact_body'] or 'none'} | "
                 f"reward={total_reward:.2f} | "
                 f"miss={info['miss_reason'] or 'none'}"
             )

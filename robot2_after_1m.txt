@@ -1,0 +1,31 @@
+Loading policy:
+/Users/mili/Documents/AudiDevCamp/ADC_Team_5/runs/ppo_two_robot_robot2_focus_70_v1/best/best_model.zip
+Robot-2 random-start probability: 0.5
+Wrapping the env with a `Monitor` wrapper
+Wrapping the env in a DummyVecEnv.
+
+Episode 1
+  Started with robot: 2
+  Reward: -44.68
+  Complete exchange: False
+  Robot 2 caught during episode: False
+  Robot 2 released: True
+  Robot 1 caught return: False
+  Robot 2 return success: False
+  Robot 1 release: N/A s | N/A m/s
+  Robot 2 release: 2.452 s | 2.804 m/s
+  Miss reason: ball_hit_floor
+  Fallen robots: none
+
+Episode 2
+  Started with robot: 2
+  Reward: -44.68
+  Complete exchange: False
+  Robot 2 caught during episode: False
+  Robot 2 released: True
+  Robot 1 caught return: False
+  Robot 2 return success: False
+  Robot 1 release: N/A s | N/A m/s
+  Robot 2 release: 2.452 s | 2.804 m/s
+  Miss reason: ball_hit_floor
+  Fallen robots: none

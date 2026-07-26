@@ -12,7 +12,9 @@ import mujoco.viewer
 import numpy as np
 from stable_baselines3 import PPO
 
-from two_robot_catch_env import TwoRobotCatchEnv
+from two_robot_catch_env_clean_right_hand import (
+    TwoRobotCatchCleanRightHandEnv,
+)
 
 
 PYTHON_DIRECTORY = Path(__file__).resolve().parent
@@ -54,6 +56,12 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--wrong-arm-contact-penalty",
+        type=float,
+        default=120.0,
+        help="Penalty used for contact with robot 1's left arm.",
+    )
+    parser.add_argument(
         "--stochastic",
         action="store_true",
     )
@@ -64,7 +72,7 @@ def run_directory_for(args: argparse.Namespace) -> Path:
     run_name = (
         args.run_name
         if args.run_name
-        else f"ppo_two_robot_{args.mode}"
+        else f"ppo_two_robot_clean_right_hand_{args.mode}"
     )
     return PROJECT_ROOT / "runs" / run_name
 
@@ -103,7 +111,7 @@ def load_configuration(args: argparse.Namespace) -> dict[str, object]:
 
 
 def reset_environment(
-    environment: TwoRobotCatchEnv,
+    environment: TwoRobotCatchCleanRightHandEnv,
     start_robot: str,
 ) -> tuple[np.ndarray, dict[str, object]]:
     options = None
@@ -162,6 +170,11 @@ def print_episode(
     print("  Robot 2 released:", info["released_by_robot_2"])
     print("  Robot 1 caught return:", info["caught_by_robot_1"])
     print("  Robot 2 return success:", info["robot_2_return_success"])
+    print("  Wrong-arm contact:", info["wrong_arm_contact"])
+    print(
+        "  Wrong-arm body:",
+        info["wrong_arm_contact_body"] or "none",
+    )
     print(
         "  Robot 1 release:",
         format_value(info["release_time_robot_1"]),
@@ -199,7 +212,7 @@ def main() -> None:
         )
     )
 
-    environment = TwoRobotCatchEnv(
+    environment = TwoRobotCatchCleanRightHandEnv(
         model_path=args.model,
         mode=args.mode,
         frame_skip=int(configuration.get("frame_skip", 5)),
@@ -217,11 +230,14 @@ def main() -> None:
         robot2_release_bonus=float(
             configuration.get("robot2_release_bonus", 30.0)
         ),
+        wrong_arm_contact_penalty=args.wrong_arm_contact_penalty,
+        terminate_on_wrong_arm_contact=True,
     )
 
     print("Loading policy:")
     print(policy_path)
     print("Robot-2 random-start probability:", probability)
+    print("Wrong-arm contact penalty:", args.wrong_arm_contact_penalty)
 
     model = PPO.load(str(policy_path), env=environment)
     observation, _ = reset_environment(

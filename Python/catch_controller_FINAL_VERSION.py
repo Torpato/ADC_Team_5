@@ -58,9 +58,23 @@ CATCH_POSE: dict[str, float] = {
 }
 
 
-# Kept separate so each receiving pose can be tuned independently later.
+# Separate receiving poses are used because the robots face opposite
+# directions. Robot 1 receives the return throw with its RIGHT hand, so its
+# left arm is kept close to neutral and outside the incoming-ball corridor.
 CATCH_POSE_BY_ROBOT: dict[int, dict[str, float]] = {
-    1: dict(CATCH_POSE),
+    1: {
+        **CATCH_POSE,
+        # Right receiving arm.
+        "right_shoulder_pitch_joint": -1.45,
+        "right_shoulder_roll_joint": -0.25,
+        "right_elbow_joint": 0.20,
+        "right_wrist_roll_joint": 1.20,
+        "right_wrist_yaw_joint": -1.00,
+        # Left arm moved away from the catch corridor.
+        "left_shoulder_pitch_joint": 0.00,
+        "left_shoulder_roll_joint": 0.15,
+        "left_elbow_joint": 0.20,
+    },
     2: dict(CATCH_POSE),
 }
 
@@ -695,11 +709,26 @@ class TwoRobotCatchController:
         )
 
     def _should_catch(self, robot: int) -> bool:
+        """Return True only when the ball is close to the target palm.
+
+        Robot 1 receives the return throw with its right hand and therefore
+        uses a smaller capture window. This prevents a loose catch from being
+        accepted after the ball has passed close to the opposite arm.
+        """
+
         distance = self.distance_to_hand(robot)
-        inside_window = distance < self.config.catch_radius
+
+        if robot == 1:
+            catch_radius = 0.10
+            immediate_catch_radius = 0.025
+        else:
+            catch_radius = self.config.catch_radius
+            immediate_catch_radius = self.config.immediate_catch_radius
+
+        inside_window = distance < catch_radius
         closest_point_reached = (
             distance > self.previous_catch_distance
-            or distance < self.config.immediate_catch_radius
+            or distance < immediate_catch_radius
         )
         return bool(inside_window and closest_point_reached)
 

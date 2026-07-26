@@ -3,18 +3,18 @@
 Examples
 --------
 Quick validation:
-    python Python/train_two_robot_ppo.py \
+    python Python/train_two_robot_ppo_clean_right_hand.py \
         --mode release_only \
         --timesteps 20000 \
         --run-name catch_release_smoke
 
 Release timing:
-    python Python/train_two_robot_ppo.py \
+    python Python/train_two_robot_ppo_clean_right_hand.py \
         --mode release_only \
         --timesteps 300000
 
 Continue the release policy and enable throwing/receiving corrections:
-    python Python/train_two_robot_ppo.py \
+    python Python/train_two_robot_ppo_clean_right_hand.py \
         --mode full_exchange \
         --timesteps 1000000 \
         --throw-noise 0.02 \
@@ -40,7 +40,9 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import get_schedule_fn
 
-from two_robot_catch_env import TwoRobotCatchEnv
+from two_robot_catch_env_clean_right_hand import (
+    TwoRobotCatchCleanRightHandEnv,
+)
 
 
 PYTHON_DIRECTORY = Path(__file__).resolve().parent
@@ -59,6 +61,9 @@ class ExchangeMetricsCallback(BaseCallback):
         self.return_success: deque[float] = deque(maxlen=window_size)
         self.falls: deque[float] = deque(maxlen=window_size)
         self.start_2: deque[float] = deque(maxlen=window_size)
+        self.wrong_arm_contacts: deque[float] = deque(
+            maxlen=window_size
+        )
         self.robot1_start_success: deque[float] = deque(
             maxlen=window_size
         )
@@ -102,6 +107,9 @@ class ExchangeMetricsCallback(BaseCallback):
                 float(bool(info.get("fallen_robots", ())))
             )
             self.start_2.append(float(starting_robot == 2))
+            self.wrong_arm_contacts.append(
+                float(info.get("wrong_arm_contact", False))
+            )
 
             if starting_robot == 1:
                 self.robot1_start_success.append(success)
@@ -131,6 +139,10 @@ class ExchangeMetricsCallback(BaseCallback):
         self._record_mean(
             "exchange/fall_rate_100",
             self.falls,
+        )
+        self._record_mean(
+            "exchange/wrong_arm_contact_rate_100",
+            self.wrong_arm_contacts,
         )
         self._record_mean(
             "curriculum/robot_2_start_fraction_100",
@@ -226,6 +238,15 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--wrong-arm-contact-penalty",
+        type=float,
+        default=120.0,
+        help=(
+            "Penalty applied when the return throw touches robot 1's "
+            "left arm before a valid right-hand catch."
+        ),
+    )
+    parser.add_argument(
         "--overwrite-run",
         action="store_true",
         help=(
@@ -240,8 +261,8 @@ def create_environment(
     args: argparse.Namespace,
     *,
     evaluation: bool,
-) -> TwoRobotCatchEnv:
-    return TwoRobotCatchEnv(
+) -> TwoRobotCatchCleanRightHandEnv:
+    return TwoRobotCatchCleanRightHandEnv(
         model_path=args.model,
         mode=args.mode,
         frame_skip=args.frame_skip,
@@ -257,6 +278,8 @@ def create_environment(
             else args.robot2_start_probability
         ),
         robot2_release_bonus=args.robot2_release_bonus,
+        wrong_arm_contact_penalty=args.wrong_arm_contact_penalty,
+        terminate_on_wrong_arm_contact=True,
     )
 
 
@@ -281,11 +304,15 @@ def main() -> None:
         raise ValueError("--robot2-release-bonus cannot be negative.")
     if args.learning_rate is not None and args.learning_rate <= 0.0:
         raise ValueError("--learning-rate must be positive.")
+    if args.wrong_arm_contact_penalty < 0.0:
+        raise ValueError(
+            "--wrong-arm-contact-penalty cannot be negative."
+        )
 
     run_name = (
         args.run_name
         if args.run_name
-        else f"ppo_two_robot_{args.mode}"
+        else f"ppo_two_robot_clean_right_hand_{args.mode}"
     )
     run_directory = PROJECT_ROOT / "runs" / run_name
 
@@ -335,6 +362,8 @@ def main() -> None:
         "released_by_robot_1",
         "released_by_robot_2",
         "robot_2_return_success",
+        "wrong_arm_contact",
+        "wrong_arm_contact_penalty",
     )
 
     training_environment = Monitor(
@@ -393,6 +422,10 @@ def main() -> None:
             args.eval_robot2_start_probability
         ),
         "robot2_release_bonus": args.robot2_release_bonus,
+        "wrong_arm_contact_penalty": (
+            args.wrong_arm_contact_penalty
+        ),
+        "terminate_on_wrong_arm_contact": True,
         "resume_model": (
             str(args.resume.expanduser().resolve())
             if args.resume is not None
@@ -400,10 +433,10 @@ def main() -> None:
         ),
         "learning_rate_override": args.learning_rate,
         "controlled_joints": list(
-            TwoRobotCatchEnv.CONTROLLED_JOINTS
+            TwoRobotCatchCleanRightHandEnv.CONTROLLED_JOINTS
         ),
         "residual_scales": (
-            TwoRobotCatchEnv.RESIDUAL_SCALES.tolist()
+            TwoRobotCatchCleanRightHandEnv.RESIDUAL_SCALES.tolist()
         ),
         "action_size": int(
             training_environment.action_space.shape[0]
@@ -500,6 +533,10 @@ def main() -> None:
     print(
         "  Evaluation robot-2 start probability:",
         args.eval_robot2_start_probability,
+    )
+    print(
+        "  Wrong-arm contact penalty:",
+        args.wrong_arm_contact_penalty,
     )
     print("  Run directory:", run_directory)
 

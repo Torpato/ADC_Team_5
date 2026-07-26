@@ -1,4 +1,8 @@
-"""Gymnasium environment for PPO training of the two-robot catch exchange.
+"""Two-robot PPO environment with clean right-hand catch enforcement.
+
+This version keeps the original deterministic physics parameters. It adds only
+the robot-1 receiving-arm correction, a smaller right-hand catch window, and an
+explicit penalty when the returning ball touches robot 1's left arm.
 
 This environment is designed for:
 
@@ -31,7 +35,7 @@ from gymnasium import spaces
 import mujoco
 import numpy as np
 
-from catch_controller_FINAL_VERSION import (
+from catch_controller_clean_right_hand import (
     CatchControllerConfig,
     CatchState,
     TwoRobotCatchController,
@@ -43,7 +47,7 @@ PROJECT_ROOT = PYTHON_DIRECTORY.parent
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "Model" / "world_catch.xml"
 
 
-class TwoRobotCatchEnv(gym.Env):
+class TwoRobotCatchCleanRightHandEnv(gym.Env):
     """Residual-RL environment for a complete two-robot ball exchange."""
 
     metadata = {"render_modes": []}
@@ -96,6 +100,8 @@ class TwoRobotCatchEnv(gym.Env):
         throw_velocity_noise: float = 0.0,
         robot2_start_probability: float = 0.50,
         robot2_release_bonus: float = 30.0,
+        wrong_arm_contact_penalty: float = 120.0,
+        terminate_on_wrong_arm_contact: bool = True,
     ) -> None:
         super().__init__()
 
@@ -121,6 +127,10 @@ class TwoRobotCatchEnv(gym.Env):
             )
         if robot2_release_bonus < 0.0:
             raise ValueError("robot2_release_bonus cannot be negative.")
+        if wrong_arm_contact_penalty < 0.0:
+            raise ValueError(
+                "wrong_arm_contact_penalty cannot be negative."
+            )
 
         self.mode = mode
         self.episode_time = float(episode_time)
@@ -134,6 +144,12 @@ class TwoRobotCatchEnv(gym.Env):
             robot2_start_probability
         )
         self.robot2_release_bonus = float(robot2_release_bonus)
+        self.wrong_arm_contact_penalty = float(
+            wrong_arm_contact_penalty
+        )
+        self.terminate_on_wrong_arm_contact = bool(
+            terminate_on_wrong_arm_contact
+        )
 
         selected_model_path = (
             Path(model_path) if model_path is not None else DEFAULT_MODEL_PATH
@@ -158,6 +174,41 @@ class TwoRobotCatchEnv(gym.Env):
             "ball_geom",
         )
         self.ball_radius = float(self.model.geom_size[self.ball_geom_id, 0])
+        # Collect all collision geometries belonging to robot 1's left arm.
+        # Body names are used instead of geom names because many MuJoCo geoms
+        # are unnamed while their parent bodies remain reliably named.
+        self.robot_1_left_arm_geom_ids: set[int] = set()
+        self.robot_1_left_arm_geom_bodies: dict[int, str] = {}
+        left_arm_tokens = (
+            "left_shoulder",
+            "left_elbow",
+            "left_wrist",
+            "left_hand",
+            "left_palm",
+        )
+
+        for geom_id in range(self.model.ngeom):
+            body_id = int(self.model.geom_bodyid[geom_id])
+            body_name = mujoco.mj_id2name(
+                self.model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                body_id,
+            )
+            if body_name is None:
+                continue
+
+            if (
+                body_name.startswith("r1_")
+                and any(token in body_name for token in left_arm_tokens)
+            ):
+                self.robot_1_left_arm_geom_ids.add(int(geom_id))
+                self.robot_1_left_arm_geom_bodies[int(geom_id)] = body_name
+
+        if not self.robot_1_left_arm_geom_ids:
+            print(
+                "Warning: no robot-1 left-arm collision geometries were "
+                "found. Wrong-arm contact detection is disabled."
+            )
 
         self.pelvis_ids = {
             robot: self._required_id(
@@ -263,6 +314,9 @@ class TwoRobotCatchEnv(gym.Env):
         self.catch_events = {1: False, 2: False}
         self.minimum_hand_distance = {1: np.inf, 2: np.inf}
         self.starting_robot = 1
+        self.wrong_arm_contact = False
+        self.wrong_arm_contact_body = ""
+        self.wrong_arm_contact_geom_id = -1
 
         self.success = False
         self.miss_reason = ""
@@ -357,6 +411,65 @@ class TwoRobotCatchEnv(gym.Env):
         }:
             return 2
         return None
+
+    def _ball_robot_1_left_arm_contact(
+        self,
+    ) -> tuple[bool, int, str]:
+        """Return whether the ball touches robot 1's left arm.
+
+        Returns:
+            ``(contact_detected, geom_id, parent_body_name)``.
+        """
+
+        if not self.robot_1_left_arm_geom_ids:
+            return False, -1, ""
+
+        for contact_index in range(self.data.ncon):
+            contact = self.data.contact[contact_index]
+            geom_1 = int(contact.geom1)
+            geom_2 = int(contact.geom2)
+
+            if geom_1 == self.ball_geom_id:
+                other_geom = geom_2
+            elif geom_2 == self.ball_geom_id:
+                other_geom = geom_1
+            else:
+                continue
+
+            if other_geom in self.robot_1_left_arm_geom_ids:
+                return (
+                    True,
+                    other_geom,
+                    self.robot_1_left_arm_geom_bodies.get(
+                        other_geom,
+                        "unknown",
+                    ),
+                )
+
+        return False, -1, ""
+
+    def _mark_wrong_arm_contact_if_present(self) -> bool:
+        """Record an invalid return catch through robot 1's left arm.
+
+        The check is active only while the ball is travelling from robot 2
+        to robot 1. Once detected, the episode is marked as failed.
+        """
+
+        if self.controller.state != CatchState.BALL_TO_ROBOT_1:
+            return False
+
+        touched, geom_id, body_name = (
+            self._ball_robot_1_left_arm_contact()
+        )
+        if not touched:
+            return False
+
+        self.wrong_arm_contact = True
+        self.wrong_arm_contact_geom_id = int(geom_id)
+        self.wrong_arm_contact_body = str(body_name)
+        self.success = False
+        self.miss_reason = "ball_hit_robot_1_left_arm"
+        return True
 
     def _ball_has_floor_contact(self) -> bool:
         for contact_index in range(self.data.ncon):
@@ -561,6 +674,9 @@ class TwoRobotCatchEnv(gym.Env):
         self.catch_events = {1: False, 2: False}
 
         self.minimum_hand_distance = {1: np.inf, 2: np.inf}
+        self.wrong_arm_contact = False
+        self.wrong_arm_contact_body = ""
+        self.wrong_arm_contact_geom_id = -1
         self.success = False
         self.miss_reason = ""
         self.fallen = ()
@@ -582,6 +698,12 @@ class TwoRobotCatchEnv(gym.Env):
         catch_progress = 0.0
 
         for _ in range(self.frame_skip):
+            # Contacts in ``data.ncon`` were generated by the previous physics
+            # step. Check them before the controller can activate grip1.
+            if self._mark_wrong_arm_contact_if_present():
+                if self.terminate_on_wrong_arm_contact:
+                    break
+
             receiver_before = self._current_receiver()
             if receiver_before is not None:
                 distance_before = self.controller.distance_to_hand(
@@ -649,6 +771,14 @@ class TwoRobotCatchEnv(gym.Env):
                 self.success = True
 
             mujoco.mj_step(self.model, self.data)
+
+            # Check contacts generated by the physics step that has just run.
+            if (
+                not self.success
+                and self._mark_wrong_arm_contact_if_present()
+                and self.terminate_on_wrong_arm_contact
+            ):
+                break
 
             self.fallen = self.controller.fallen_robots()
             if self.fallen:
@@ -819,7 +949,9 @@ class TwoRobotCatchEnv(gym.Env):
         if exchange_completed:
             reward += 100.0
 
-        if self.miss_reason:
+        if self.miss_reason == "ball_hit_robot_1_left_arm":
+            reward -= self.wrong_arm_contact_penalty
+        elif self.miss_reason:
             reward -= 80.0
 
         if self.fallen:
@@ -1001,6 +1133,14 @@ class TwoRobotCatchEnv(gym.Env):
             "minimum_distance_robot_1": self._safe_metric(
                 self.minimum_hand_distance[1]
             ),
+            "wrong_arm_contact": bool(self.wrong_arm_contact),
+            "wrong_arm_contact_body": self.wrong_arm_contact_body,
+            "wrong_arm_contact_geom_id": int(
+                self.wrong_arm_contact_geom_id
+            ),
+            "wrong_arm_contact_penalty": float(
+                self.wrong_arm_contact_penalty
+            ),
             "miss_reason": self.miss_reason,
             "fallen_robots": tuple(self.fallen),
             "simulation_time": float(self.data.time),
@@ -1009,3 +1149,7 @@ class TwoRobotCatchEnv(gym.Env):
 
     def close(self) -> None:
         return None
+
+
+# Compatibility alias for existing training and test utilities.
+TwoRobotCatchEnv = TwoRobotCatchCleanRightHandEnv
